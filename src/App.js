@@ -21,6 +21,8 @@ const App = () => {
 	const [createdTokenPublicKey, setCreatedTokenPublicKey] = useState(null);
 	const [mintingWalletSecretKey, setMintingWalletSecretKey] = useState(null);
 
+	const [supplyCapped, setSupplyCapped] = useState(false);
+
 	const getProvider = async () => {
 		// Due to installing @solana/web3.js , we now have access to the “solana” variable globally in the window.
 		if ('solana' in window) {
@@ -139,8 +141,162 @@ const App = () => {
 
 			console.log('SIGNATURE:', signature);
 
-			setCreatedTokenPublicKey(creatorToken.publicKey.toString());
+			// https://github.com/altsam/create_crypto_with_js/issues/3
+			setCreatedTokenPublicKey(creatorToken.publicKey);
 			setIsTokenCreated(true);
+			setLoading(false);
+		} catch (err) {
+			console.log(err);
+			setLoading(false);
+		}
+	};
+
+	const mintAgainHelper = async () => {
+		try {
+			setLoading(true);
+			const connection = new Connection(
+				clusterApiUrl('devnet'),
+				'confirmed'
+			);
+			const createMintingWallet = await Keypair.fromSecretKey(
+				Uint8Array.from(
+					Object.values(JSON.parse(mintingWalletSecretKey))
+				)
+			);
+			const mintRequester = await provider.publicKey;
+
+			const fromAirDropSignature = await connection.requestAirdrop(
+				createMintingWallet.publicKey,
+				LAMPORTS_PER_SOL
+			);
+			await connection.confirmTransaction(fromAirDropSignature, {
+				commitment: 'confirmed',
+			});
+
+			const creatorToken = new Token(
+				connection,
+				createdTokenPublicKey,
+				TOKEN_PROGRAM_ID,
+				createMintingWallet
+			);
+			const fromTokenAccount =
+				await creatorToken.getOrCreateAssociatedAccountInfo(
+					createMintingWallet.publicKey
+				);
+			const toTokenAccount =
+				await creatorToken.getOrCreateAssociatedAccountInfo(
+					mintRequester
+				);
+			await creatorToken.mintTo(
+				fromTokenAccount.address,
+				createMintingWallet.publicKey,
+				[],
+				100000000
+			);
+
+			const transaction = new Transaction().add(
+				Token.createTransferInstruction(
+					TOKEN_PROGRAM_ID,
+					fromTokenAccount.address,
+					toTokenAccount.address,
+					createMintingWallet.publicKey,
+					[],
+					100000000
+				)
+			);
+			await sendAndConfirmTransaction(
+				connection,
+				transaction,
+				[createMintingWallet],
+				{ commitment: 'confirmed' }
+			);
+
+			setLoading(false);
+		} catch (err) {
+			console.log(err);
+			setLoading(false);
+		}
+	};
+
+	//   const transferTokenHelper = async () => {
+	//     try {
+	//        setLoading(true);
+
+	//        const connection = new Connection(
+	//           clusterApiUrl("devnet"),
+	//           "confirmed"
+	//        );
+
+	//        const createMintingWallet = Keypair.fromSecretKey(Uint8Array.from(Object.values(JSON.parse(mintingWalletSecretKey))));
+	//        const receiverWallet = new PublicKey("5eaFQvgJgvW4rDjcAaKwdBb6ZAJ6avWimftFyjnQB3Aj");
+
+	//        const fromAirDropSignature = await connection.requestAirdrop(createMintingWallet.publicKey, LAMPORTS_PER_SOL);
+	//        await connection.confirmTransaction(fromAirDropSignature, { commitment: "confirmed" });
+	//        console.log('1 SOL airdropped to the wallet for fee');
+
+	//        const creatorToken = new Token(connection, createdTokenPublicKey, TOKEN_PROGRAM_ID, createMintingWallet);
+	//        const fromTokenAccount = await creatorToken.getOrCreateAssociatedAccountInfo(provider.publicKey);
+	//        const toTokenAccount = await creatorToken.getOrCreateAssociatedAccountInfo(receiverWallet);
+
+	//        const transaction = new Transaction().add(
+	//           Token.createTransferInstruction(
+	//             TOKEN_PROGRAM_ID, fromTokenAccount.address, toTokenAccount.address, provider.publicKey, [], 10000000);
+	//        );
+	//        transaction.feePayer = provider.publicKey;
+	//        let blockhashObj = await connection.getRecentBlockhash();
+	//        console.log("blockhashObj", blockhashObj);
+	//        transaction.recentBlockhash = await blockhashObj.blockhash;
+
+	//        if (transaction) {
+	//           console.log("Txn created successfully");
+	//        }
+
+	//        let signed = await provider.signTransaction(transaction);
+	//        let signature = await connection.sendRawTransaction(signed.serialize());
+	//        await connection.confirmTransaction(signature);
+
+	//        console.log("SIGNATURE: ", signature);
+	//        setLoading(false);
+	//     } catch(err) {
+	//        console.log(err)
+	//        setLoading(false);
+	//     }
+	//  }
+
+	const capSupplyHelper = async () => {
+		try {
+			setLoading(true);
+			const connection = new Connection(
+				clusterApiUrl('devnet'),
+				'confirmed'
+			);
+
+			const createMintingWallet = await Keypair.fromSecretKey(
+				Uint8Array.from(
+					Object.values(JSON.parse(mintingWalletSecretKey))
+				)
+			);
+			const fromAirDropSignature = await connection.requestAirdrop(
+				createMintingWallet.publicKey,
+				LAMPORTS_PER_SOL
+			);
+			await connection.confirmTransaction(fromAirDropSignature);
+
+			const creatorToken = new Token(
+				connection,
+				createdTokenPublicKey,
+				TOKEN_PROGRAM_ID,
+				createMintingWallet
+			);
+			await creatorToken.setAuthority(
+				createdTokenPublicKey,
+				null,
+				'MintTokens',
+				createMintingWallet.publicKey,
+				[createMintingWallet]
+			);
+
+			setSupplyCapped(true);
 			setLoading(false);
 		} catch (err) {
 			console.log(err);
@@ -165,6 +321,54 @@ const App = () => {
 							AirDrop SOL{' '}
 						</button>
 					</p>
+
+					{/* if initial mint not done, initial mint btn is shown, if done, then mint more btn is shown */}
+					{isTokenCreated ? (
+						<>
+							<li>
+								Mint More 100 tokens:{' '}
+								<button
+									disabled={loading || supplyCapped}
+									onClick={mintAgainHelper}
+								>
+									Mint Again
+								</button>
+							</li>
+
+							{/* <li>
+							Transfer 10 tokens:{' '}
+							<button
+								disabled={loading}
+								onClick={transferTokenHelper}
+							>
+								Mint Again
+							</button>
+						</li> */}
+
+							<li>
+								Cap token supply:{' '}
+								<button
+									disabled={loading || supplyCapped}
+									onClick={mintAgainHelper}
+								>
+									Cap token supply
+								</button>
+							</li>
+
+              <li>Transfer 10 tokens function not working(see later)</li>
+						</>
+					) : (
+						// <p>
+						// 	Create your own token
+						// 	<button
+						// 		disabled={loading}
+						// 		onClick={initialMintHelper}
+						// 	>
+						// 		Initial Mint{' '}
+						// 	</button>
+						// </p>
+						<p></p>
+					)}
 
 					<p>
 						Create your own token
